@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+<!-- Playables SDK -->
+<script>// Playables SDK v1.0.0
+// Game lifecycle bridge: rAF-based game-ready detection + event communication
+(function() {
+  'use strict';
+
+  // Idempotency: skip if already initialized (e.g., server-side injection
+  // followed by client-side inject-javascript via the Bloks webview component).
+  if (window.playablesSDK) return;
+
+  var HANDLER_NAME = 'playablesGameEventHandler';
+  var ANDROID_BRIDGE_NAME = '_MetaPlayablesBridge';
+  var RAF_FRAME_THRESHOLD = 3;
+
+  var gameReadySent = false;
+  var firstInteractionSent = false;
+  var errorSent = false;
+  var frameCount = 0;
+  var originalRAF = window.requestAnimationFrame;
+
+  // --- Transport Layer ---
+
+  function hasIOSBridge() {
+    return !!(window.webkit &&
+              window.webkit.messageHandlers &&
+              window.webkit.messageHandlers[HANDLER_NAME]);
+  }
+
+  function hasAndroidBridge() {
+    return !!(window[ANDROID_BRIDGE_NAME] &&
+              typeof window[ANDROID_BRIDGE_NAME].postEvent === 'function');
+  }
+
+  function isInIframe() {
+    return !!(window.parent && window.parent !== window);
+  }
+
+  function sendEvent(eventName, payload) {
+    var message = {
+      type: eventName,
+      payload: payload || {},
+      timestamp: Date.now()
+    };
+
+    if (hasIOSBridge()) {
+      try {
+        window.webkit.messageHandlers[HANDLER_NAME].postMessage(message);
+      } catch (e) { /* ignore */ }
+      return;
+    }
+
+    if (hasAndroidBridge()) {
+    try {
+      var p = payload || {};
+      p.__secureToken = window.__fbAndroidBridgeAuthToken || '';
+      p.timestamp = message.timestamp;
+      window[ANDROID_BRIDGE_NAME].postEvent(
+        eventName,
+        JSON.stringify(p)
+      );
+    } catch (e) { /* ignore */ }
+    return;
+  }
+
+    if (isInIframe()) {
+      try {
+        window.parent.postMessage(message, '*');
+      } catch (e) { /* ignore */ }
+      return;
+    }
+  }
+
+  // --- rAF Game-Ready Detection ---
+
+  function onFrame() {
+    if (gameReadySent) return;
+
+    frameCount++;
+    if (frameCount >= RAF_FRAME_THRESHOLD) {
+      gameReadySent = true;
+      sendEvent('game_ready', {
+        frame_count: frameCount,
+        detected_at: Date.now()
+      });
+      return;
+    }
+
+    originalRAF.call(window, onFrame);
+  }
+
+  if (originalRAF) {
+    window.requestAnimationFrame = function(callback) {
+      if (!gameReadySent) {
+        return originalRAF.call(window, function(timestamp) {
+          frameCount++;
+          if (frameCount >= RAF_FRAME_THRESHOLD && !gameReadySent) {
+            gameReadySent = true;
+            sendEvent('game_ready', {
+              frame_count: frameCount,
+              detected_at: Date.now()
+            });
+          }
+          callback(timestamp);
+        });
+      }
+      return originalRAF.call(window, callback);
+    };
+  }
+
+  // --- First User Interaction Detection ---
+
+  function setupFirstInteractionDetection() {
+    var events = ['touchstart', 'mousedown', 'keydown'];
+
+    function onFirstInteraction() {
+      if (firstInteractionSent) return;
+      firstInteractionSent = true;
+      sendEvent('user_interaction_start', null);
+
+      for (var i = 0; i < events.length; i++) {
+        document.removeEventListener(events[i], onFirstInteraction, true);
+      }
+    }
+
+    for (var i = 0; i < events.length; i++) {
+      document.addEventListener(events[i], onFirstInteraction, true);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupFirstInteractionDetection);
+  } else {
+    setupFirstInteractionDetection();
+  }
+
+  // --- Auto Error Capture ---
+
+  window.addEventListener('error', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    sendEvent('error', {
+      message: event.message || 'Unknown error',
+      source: event.filename || '',
+      lineno: event.lineno || 0,
+      colno: event.colno || 0,
+      auto_captured: true
+    });
+  });
+
+  window.addEventListener('unhandledrejection', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    var reason = event.reason;
+    sendEvent('error', {
+      message: (reason instanceof Error) ? reason.message : String(reason),
+      type: 'unhandled_promise_rejection',
+      auto_captured: true
+    });
+  });
+
+  // --- Public API ---
+
+  window.playablesSDK = {
+    complete: function(score) {
+      sendEvent('game_ended', {
+        score: score,
+        completed: true
+      });
+    },
+
+    error: function(message) {
+      if (errorSent) return;
+      errorSent = true;
+      sendEvent('error', {
+        message: message || 'Unknown error',
+        auto_captured: false
+      });
+    },
+
+    sendEvent: function(eventName, payload) {
+      if (!eventName || typeof eventName !== 'string') return;
+      sendEvent(eventName, payload);
+    }
+  };
+
+  // Kick off rAF detection in case no game code calls rAF immediately
+  if (originalRAF) {
+    originalRAF.call(window, onFrame);
+  }
+})();</script>
+<!-- PLAYABLE_TOUCH_PATCH_V1 --><script>
+(function() {
+  if (window.__playableTouchPatchInstalled) return;
+  window.__playableTouchPatchInstalled = true;
+  var origAdd = EventTarget.prototype.addEventListener;
+  var blockedTypes = { touchstart: 1, touchmove: 1, wheel: 1 };
+  EventTarget.prototype.addEventListener = function(type, listener, options) {
+    if (blockedTypes[type]) {
+      if (options === undefined || options === null) {
+        options = { passive: true };
+      } else if (typeof options === 'boolean') {
+        options = { capture: options, passive: true };
+      } else {
+        options = Object.assign({}, options, { passive: true });
+      }
+    }
+    return origAdd.call(this, type, listener, options);
+  };
+})();
+</script><script>window.Intl=window.Intl||{};Intl.t=function(s){return(Intl._locale&&Intl._locale[s])||s;};</script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta name="theme-color" content="#0f0c29" />
+<title>GStudio Calc — Calculadora Inteligente</title>
+<style>
+  :root {
+    --bg1: #0f0c29;
+    --bg2: #302b63;
+    --bg3: #24243e;
+    --card: rgba(255,255,255,0.07);
+    --card-2: rgba(255,255,255,0.09);
+    --text: #e9ecf8;
+    --muted: #a6aecd;
+    --accent: #8b5cf6;
+    --accent2: #3b82f6;
+    --danger: #ef4444;
+    --ok: #22c55e;
+    --shadow: 0 12px 40px rgba(0,0,0,.35);
+    --ring: rgba(139,92,246,.35);
+  }
+  [data-theme="light"] {
+    --bg1: #eef2ff;
+    --bg2: #dbeafe;
+    --bg3: #f5f3ff;
+    --card: rgba(255,255,255,0.8);
+    --card-2: rgba(255,255,255,0.95);
+    --text: #0f1222;
+    --muted: #5b627a;
+    --shadow: 0 12px 30px rgba(79,70,229,.18);
+    --ring: rgba(59,130,246,.25);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    margin:0;
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, "Helvetica Neue", Arial;
+    color:var(--text);
+    background:
+      radial-gradient(1200px 700px at 85% -10%, #3b82f6 0%, transparent 55%),
+      radial-gradient(900px 600px at -15% 15%, #8b5cf6 0%, transparent 50%),
+      linear-gradient(135deg,var(--bg1),var(--bg2),var(--bg3));
+    display:grid; place-items:start center;
+  }
+  .app{
+    width:100%; max-width:420px; min-height:100dvh;
+    padding:22px 16px 120px; display:flex; flex-direction:column; gap:14px;
+  }
+  header{
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .brand{display:flex; align-items:center; gap:12px}
+  .logo{
+    width:40px; height:40px; border-radius:14px;
+    background:linear-gradient(135deg,var(--accent),var(--accent2));
+    display:grid; place-items:center; color:white; font-weight:800; letter-spacing:.5px;
+    box-shadow:0 8px 24px var(--ring); position:relative; overflow:hidden;
+  }
+  .logo::after{
+    content:""; position:absolute; inset:0;
+    background:linear-gradient(180deg,rgba(255,255,255,.25),transparent);
+    mix-blend-mode:overlay;
+  }
+  .title h1{margin:0; font-size:1.18rem; font-weight:800; letter-spacing:.2px}
+  .title span{display:block; font-size:.73rem; color:var(--muted); margin-top:2px}
+  .actions{display:flex; gap:8px}
+  .icon{
+    width:40px; height:40px; border-radius:12px; display:grid; place-items:center;
+    background:var(--card); border:1px solid rgba(255,255,255,.08); cursor:pointer;
+    transition:.2s transform, .2s background, .2s border-color; backdrop-filter: blur(10px);
+  }
+  .icon:active{transform:scale(.94)}
+  .display{
+    background:linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
+    border:1px solid rgba(255,255,255,.12);
+    border-radius:26px; padding:22px 18px; box-shadow:var(--shadow);
+    backdrop-filter: blur(16px);
+  }
+  .expr{
+    min-height:28px; font-size:1.1rem; color:var(--muted); text-align:right;
+    word-break:break-word; font-variant-numeric:tabular-nums; letter-spacing:.2px;
+  }
+  .result{
+    min-height:54px; font-size:2.7rem; font-weight:800; text-align:right;
+    line-height:1.1; letter-spacing:-.5px; margin-top:4px; transition:transform .12s ease;
+    font-variant-numeric:tabular-nums;
+  }
+  .result.bump{transform:scale(1.025)}
+  .hint{margin-top:6px; font-size:.72rem; color:var(--muted); text-align:right; opacity:.8}
+  .sci{display:grid; grid-template-columns:repeat(4,1fr); gap:10px}
+  .keys{display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:4px}
+  .btn{
+    border:none; border-radius:18px; padding:16px 10px; font-size:1.22rem; font-weight:700;
+    background:var(--card); color:var(--text); cursor:pointer;
+    border:1px solid rgba(255,255,255,.08); backdrop-filter: blur(12px);
+    transition:transform .06s ease, background .2s, border-color .2s, filter .2s;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+    user-select:none;
+  }
+  .btn:active{transform:scale(.94)}
+  .btn.small{font-size:.98rem; padding:12px 10px; border-radius:14px; font-weight:700}
+  .btn.op{color:#d7ccff; background:linear-gradient(180deg, rgba(139,92,246,.22), rgba(139,92,246,.12)); border-color:rgba(139,92,246,.35)}
+  .btn.ac{color:#ffd1d1; background:linear-gradient(180deg, rgba(239,68,68,.22), rgba(239,68,68,.12)); border-color:rgba(239,68,68,.35)}
+  .btn.eq{
+    background:linear-gradient(135deg,var(--accent),var(--accent2)); color:white; border:none;
+    box-shadow:0 10px 24px var(--ring);
+  }
+  .btn.ghost{background:var(--card-2)}
+  /* histórico */
+  .history{
+    position:fixed; inset:0 0 0 auto; width:min(88%,360px); max-width:420px;
+    background:rgba(12,10,30,.82); backdrop-filter: blur(22px);
+    border-left:1px solid rgba(255,255,255,.12); transform:translateX(105%);
+    transition:transform .32s cubic-bezier(.2,.8,.2,1); z-index:50; display:flex; flex-direction:column;
+  }
+  [data-theme="light"] .history{background:rgba(255,255,255,.9)}
+  .history.open{transform:none}
+  .history header{padding:18px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid rgba(255,255,255,.1)}
+  .history h3{margin:0; font-size:1rem}
+  .hist-list{overflow:auto; padding:12px; display:flex; flex-direction:column; gap:10px; flex:1}
+  .hist-item{
+    background:var(--card); border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:12px;
+    display:flex; flex-direction:column; gap:4px; cursor:pointer; transition:.15s;
+  }
+  .hist-item:active{transform:scale(.98)}
+  .hist-item .e{color:var(--muted); font-size:.9rem; text-align:right}
+  .hist-item .r{font-weight:800; text-align:right; font-size:1.1rem}
+  .hist-foot{padding:12px; border-top:1px solid rgba(255,255,255,.1); display:flex; gap:8px}
+  .link{flex:1; padding:12px; border-radius:12px; border:1px solid rgba(255,255,255,.1); background:var(--card); color:var(--text); font-weight:700; cursor:pointer}
+  /* rodapé pix */
+  footer{position:fixed; left:0; right:0; bottom:0; display:grid; place-items:center; padding:16px env(safe-area-inset-bottom); pointer-events:none; z-index:40}
+  .pix-fab{
+    pointer-events:auto; border:none; cursor:pointer; font-weight:800; letter-spacing:.2px;
+    padding:14px 22px; border-radius:999px; color:white;
+    background:linear-gradient(135deg,#ec4899 0%, #8b5cf6 50%, #3b82f6 100%);
+    box-shadow:0 14px 34px rgba(139,92,246,.45), 0 4px 12px rgba(236,72,153,.35);
+    display:flex; align-items:center; gap:10px; transition:transform .12s ease, filter .2s;
+  }
+  .pix-fab:active{transform:translateY(1px) scale(.98)}
+  /* modal */
+  .modal{position:fixed; inset:0; display:none; place-items:center; padding:20px; z-index:60; background:rgba(5,5,15,.6); backdrop-filter:blur(10px)}
+  .modal.open{display:grid}
+  .modal-card{
+    width:100%; max-width:360px; background:linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.06));
+    border:1px solid rgba(255,255,255,.18); border-radius:26px; padding:22px; box-shadow:var(--shadow);
+    text-align:center; backdrop-filter: blur(18px);
+  }
+  [data-theme="light"] .modal-card{background:white}
+  .modal-card h2{margin:2px 0 6px; font-size:1.35rem}
+  .modal-card p.sub{margin:0 0 14px; color:var(--muted)}
+  .qr{
+    width:200px; height:200px; object-fit:contain; border-radius:16px; background:white; padding:10px;
+    margin:8px auto 14px; display:block; box-shadow:0 8px 24px rgba(0,0,0,.25)
+  }
+  .pix-key{
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas; font-weight:800; letter-spacing:.3px;
+    background:rgba(0,0,0,.25); color:#fff; padding:12px 14px; border-radius:12px; border:1px dashed rgba(255,255,255,.25);
+    margin:0 auto 12px; word-break:break-all;
+  }
+  [data-theme="light"] .pix-key{background:#0f1222; color:#fff}
+  .modal-actions{display:flex; gap:10px; margin-top:6px}
+  .btn-modal{flex:1; padding:12px; border-radius:12px; border:1px solid rgba(255,255,255,.15); background:var(--card); color:var(--text); font-weight:800; cursor:pointer}
+  .btn-primary{border:none; background:linear-gradient(135deg,var(--accent),var(--accent2)); color:white; box-shadow:0 8px 20px var(--ring)}
+  .tiny{margin-top:10px; font-size:.75rem; color:var(--muted)}
+  /* toast */
+  #toast{
+    position:fixed; left:50%; bottom:96px; transform:translateX(-50%) translateY(16px);
+    background:#0f1222; color:white; padding:12px 16px; border-radius:12px; font-weight:700;
+    box-shadow:0 10px 30px rgba(0,0,0,.4); opacity:0; pointer-events:none; transition:.28s; z-index:70;
+    border:1px solid rgba(255,255,255,.12)
+  }
+  #toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
+  /* responsivo */
+  @media (min-width:480px){
+    .app{padding-top:40px}
+    .result{font-size:3rem}
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="brand">
+        <div class="logo">G</div>
+        <div class="title">
+          <h1>GStudio Calc</h1>
+          <span>inteligente • automática</span>
+        </div>
+      <div class="actions">
+        <button class="icon" id="btnTheme" aria-label="Alternar tema" title="Tema">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>
+          </svg>
+        </button>
+        <button class="icon" id="btnHistory" aria-label="Histórico" title="Histórico">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 12a9 9 0 1 0 18 0 9 9 0 0 0-18 0"/>
+            <path d="M12 7v5l3 3"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <section class="display" aria-live="polite">
+      <div id="expression" class="expr">0</div>
+      <div id="result" class="result"></div>
+      <div class="hint">Digite e veja o resultado em tempo real. Ex: 10% de 250</div>
+    </section>
+
+    <!-- Modo científico básico -->
+    <div class="sci">
+      <button class="btn small ghost" data-action="square" title="Ao quadrado">x²</button>
+      <button class="btn small ghost" data-insert="√(" title="Raiz quadrada">√</button>
+      <button class="btn small ghost" data-insert="^" title="Potência">^</button>
+      <button class="btn small ghost" data-action="paren" title="Parênteses">( )</button>
+    </div>
+
+    <!-- Teclado -->
+    <div class="keys">
+      <button class="btn ac" data-action="ac">AC</button>
+      <button class="btn" data-action="clear">C</button>
+      <button class="btn" data-action="del" aria-label="Apagar">⌫</button>
+      <button class="btn op" data-insert="÷">÷</button>
+
+      <button class="btn" data-insert="7">7</button>
+      <button class="btn" data-insert="8">8</button>
+      <button class="btn" data-insert="9">9</button>
+      <button class="btn op" data-insert="×">×</button>
+
+      <button class="btn" data-insert="4">4</button>
+      <button class="btn" data-insert="5">5</button>
+      <button class="btn" data-insert="6">6</button>
+      <button class="btn op" data-insert="-">−</button>
+
+      <button class="btn" data-insert="1">1</button>
+      <button class="btn" data-insert="2">2</button>
+      <button class="btn" data-insert="3">3</button>
+      <button class="btn op" data-insert="+">+</button>
+
+      <button class="btn" data-insert="%">%</button>
+      <button class="btn" data-insert="0">0</button>
+      <button class="btn" data-insert=",">,</button>
+      <button class="btn eq" data-action="equals">=</button>
+    </div>
+  </div>
+
+  <!-- Histórico lateral -->
+  <aside id="history" class="history" aria-hidden="true">
+    <header>
+      <h3>Histórico</h3>
+      <button class="icon" id="closeHistory" aria-label="Fechar">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </header>
+    <div id="histList" class="hist-list"></div>
+    <div class="hist-foot">
+      <button id="clearHist" class="link">Limpar histórico</button>
+    </div>
+  </aside>
+
+  <!-- Rodapé Pix -->
+  <footer>
+    <button class="pix-fab" id="openPix">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+      Apoie com Pix ❤️
+    </button>
+  </footer>
+
+  <!-- Modal Pix -->
+  <div id="pixModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="pixTitle">
+    <div class="modal-card">
+      <h2 id="pixTitle">Apoie o GStudio App</h2>
+      <p class="sub">Sua contribuição mantém o app gratuito</p>
+      <img class="qr" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAZoAAAGaAQAAAAAefbjOAAADF0lEQVR4nO2cQW7jMAxFH8cCupSBHKBHsW82Z5obWEfJAQrYywIy/iwkOW6zGLQdOG1CLZTE0UMphJA+SakmPtzSr48z4JBDDjnkkEMO3SdktQVgCZj1YCOrmfWrwdIGjDcxz6HjoUGSNAOpX03TYgbLkxjmTjbSSZL0FjrOPIeOg0J9XXoY/oARZ4z4Ur5Qsi4DYFDfffs5OfQVKFw/WgPDnydZes7YMJ8Qy63Mc+hw6NojloDg1QRrIPXdf/pLDv0sKEqaAAZlbARsLDqiDpCU30PHmefQ0VAyM7Meip4sXWtWog4zu5V5Dh29a1ynslcTCyj1mN4P+OZzcugrECWqrJtDV0NQAE1RkubuzbeSNH3zOTn0FYhLnkFTzKVjkMSwCYdhbvmIwT3i3qFt11gDLJfIYw2wnGTQZUt9h9Vxx5rn0K2g1IONMWO/zxdluRrEVwNW00QnG29jnkOH5yOGeaWuEfG1+EFRlvXZS7DiIAeb59DhEFUsUqUk0KTkMHflozRvneuIe4easox5E5CZdy5QY42YcY94IKiTpphLIbzKCoBkAYh6k7X6KXNy6DOtrQJd68om0tVOc3UVXZqvEfcMbfmI9sNf8hFEz0c8INSkQWzHYYqoVN4JzaI7XVk+BlSiTyOugWFag9JzDtU5lpCVRmA7QHO4eQ4dDm3RZ7cLQS918VLXqGFG3U58jbhraB99EtWiT2Wag7SwdPLo8yGgq9rnBJQC6JahqjUv94iHgJpHlC1hWx62baIuHhmqb7hH3Dm094iawK5Z7N1qAWz+4h5x59A+87QpiouyZFsZ9vmrbz4nh74CteiztC4LViC+BLGcRBpXg+WUKSftDjbPocOhVg2fAJYTRpxl5XnM7S7Plr082jyHbgYt7VLncDYrMSdLQDo/iWRmEOUnZh4Saj+8jfHVzJ5brSP1fmLmEaCrO12pfwnt0sZJxmJlmNLo1fBHglruWjqHUu6yEdgdrtpud/2YOTn0GWh3Op8tH6GJrp7Yr3WN6hGej7h/yK6vc/2z+X8mc8ghhxxyyCGHAP4Ct71l5mwZIl8AAAAASUVORK5CYII=" alt="QR Code Pix para apoio" />
+      <div class="pix-key" id="pixKey">gstudioapp900@gmail.com</div>
+      <div class="modal-actions">
+        <button class="btn-modal btn-primary" id="copyPix">Copiar chave</button>
+        <button class="btn-modal" id="closePix">Fechar</button>
+      </div>
+      <p class="tiny">Chave Pix (e-mail). Obrigado pelo apoio! 💜</p>
+    </div>
+  </div>
+
+  <div id="toast" role="status" aria-live="polite">Chave copiada!</div>
+
+<script>
+/* ====== GStudio Calc - JS vanilla comentado em PT-BR ====== */
+const exprEl = document.getElementById('expression');
+const resEl = document.getElementById('result');
+const histEl = document.getElementById('history');
+const histList = document.getElementById('histList');
+const toast = document.getElementById('toast');
+
+let expr = ''; // expressão digitada (com vírgula BR)
+let history = load('gstudio_calc_history') || [];
+let theme = load('gstudio_calc_theme') || 'dark';
+document.documentElement.setAttribute('data-theme', theme);
+
+/* ---------- Utilidades ---------- */
+function save(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
+function load(key){ try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } }
+function vibrate(ms=10){ if(navigator.vibrate) navigator.vibrate(ms); }
+function showToast(msg='Chave copiada!'){
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(()=>toast.classList.remove('show'), 1800);
+}
+function formatBR(n){
+  if(!isFinite(n)) return '';
+  return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 10 }).format(n);
+}
+
+/* ---------- Cálculo automático ---------- */
+function toCompute(str){
+  if(!str) return '';
+  let s = str;
+
+  // normaliza vírgula e espaços
+  s = s.replace(/,/g, '.').replace(/\s+/g,' ').trim();
+
+  // interpretação natural PT-BR: "10% de 250", "5 por cento de 200"
+  s = s.replace(/(\d+(?:\.\d+)?)\s*%\s*de\s*(\d+(?:\.\d+)?)/gi, '($1/100*$2)');
+  s = s.replace(/(\d+(?:\.\d+)?)\s*(?:por cento|porcento)\s+de\s+(\d+(?:\.\d+)?)/gi, '($1/100*$2)');
+
+  // símbolos visuais para JS
+  s = s.replace(/×/g,'*').replace(/÷/g,'/').replace(/−/g,'-').replace(/–/g,'-');
+
+  // potência
+  s = s.replace(/\^/g,'**');
+
+  // raiz quadrada: √9 ou √(9+16)
+  s = s.replace(/√\s*\(/g,'Math.sqrt(');
+  s = s.replace(/√\s*(\d+(?:\.\d+)?)/g,'Math.sqrt($1)');
+
+  // porcentagens soltas: 50% -> (50/100)
+  s = s.replace(/(\d+(?:\.\d+)?)%/g,'($1/100)');
+
+  // remove caracteres inválidos (mantém Math.sqrt)
+  s = s.replace(/[^0-9+\-*/().\sMathsqrt]/g, '');
+
+  return s;
+}
+
+function calculate(raw){
+  try{
+    const code = toCompute(raw);
+    if(!code) return null;
+    // evita expressões incompletas como "5+"
+    if(/[+\-*/(]\s*$/.test(code)) return null;
+    const val = Function('"use strict";return ('+code+')')();
+    if(typeof val === 'number' && isFinite(val)) return val;
+    return null;
+  }catch(e){ return null; }
+}
+
+function render(){
+  exprEl.textContent = expr || '0';
+  const val = calculate(expr);
+  if(val !== null){
+    const f = formatBR(val);
+    if(resEl.textContent !== f){
+      resEl.classList.remove('bump'); void resEl.offsetWidth; resEl.classList.add('bump');
+    }
+    resEl.textContent = f;
+  }else{
+    resEl.textContent = '';
+  }
+}
+
+/* ---------- Interações do teclado ---------- */
+function insert(txt){
+  vibrate(8);
+  // evita dois operadores seguidos
+  const ops = ['+','-','×','÷','^','%','.',' ,'];
+  const last = expr.slice(-1);
+  if(ops.includes(txt) && ops.includes(last)){
+    expr = expr.slice(0,-1) + txt;
+  }else{
+    expr += txt;
+  }
+  render();
+}
+function del(){ expr = expr.slice(0,-1); render(); }
+function clearEntry(){ expr = ''; render(); }
+function allClear(){ expr=''; render(); }
+function toggleParen(){
+  const open = (expr.match(/\(/g)||[]).length;
+  const close = (expr.match(/\)/g)||[]).length;
+  const last = expr.slice(-1);
+  if(open>close && /[0-9%.)]/.test(last)){ insert(')'); } else { insert('('); }
+}
+function square(){ // x²
+  if(!expr || /[+\-×÷(]$/.test(expr)) return;
+  insert('^2');
+}
+function equals(){
+  const val = calculate(expr);
+  if(val===null) return;
+  addToHistory(expr, val);
+  expr = String(val).replace('.',','); // mantém padrão BR na tela
+  render();
+}
+
+/* ---------- Histórico ---------- */
+function addToHistory(e, v){
+  const item = { e, v, t: Date.now() };
+  history.unshift(item);
+  history = history.slice(0,20);
+  save('gstudio_calc_history', history);
+  drawHistory();
+}
+function drawHistory(){
+  histList.innerHTML = '';
+  if(history.length===0){
+    histList.innerHTML = '<div style="opacity:.7;text-align:center;padding:20px">Sem operações ainda.</div>';
+    return;
+  }
+  history.forEach((h)=>{
+    const div = document.createElement('div');
+    div.className='hist-item';
+    div.innerHTML = `<div class="e">${h.e}</div><div class="r">= ${formatBR(h.v)}</div>`;
+    div.onclick = ()=>{ expr = h.e; render(); closeHist(); };
+    histList.appendChild(div);
+  });
+}
+function openHist(){ histEl.classList.add('open'); histEl.setAttribute('aria-hidden','false'); }
+function closeHist(){ histEl.classList.remove('open'); histEl.setAttribute('aria-hidden','true'); }
+
+/* ---------- Tema ---------- */
+document.getElementById('btnTheme').onclick = ()=>{
+  theme = theme==='dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', theme);
+  save('gstudio_calc_theme', theme);
+  vibrate(5);
+};
+
+/* ---------- Listeners botões ---------- */
+document.querySelectorAll('.btn').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    const ins = b.dataset.insert;
+    const act = b.dataset.action;
+    if(ins) insert(ins);
+    if(act==='ac') allClear();
+    if(act==='clear') clearEntry();
+    if(act==='del') del();
+    if(act==='paren') toggleParen();
+    if(act==='square') square();
+    if(act==='equals') equals();
+  });
+});
+
+/* ---------- Teclado físico ---------- */
+window.addEventListener('keydown', (e)=>{
+  const k = e.key;
+  if(/^[0-9]$/.test(k)) return insert(k);
+  if(k===','||k==='.') return insert(',');
+  if(k==='+'||k==='-') return insert(k);
+  if(k==='*' ) return insert('×');
+  if(k==='/' ) return insert('÷');
+  if(k==='%' ) return insert('%');
+  if(k==='^' ) return insert('^');
+  if(k==='('||k===')') return insert(k);
+  if(k.toLowerCase()==='r') return insert('√('); // atalho
+  if(k==='Enter' || k==='=') { e.preventDefault(); equals(); }
+  if(k==='Backspace') { e.preventDefault(); del(); }
+  if(k==='Escape') { allClear(); }
+  // permite digitar texto para interpretação natural
+  if(/^[a-zç\s]$/i.test(k) && e.ctrlKey===false && e.metaKey===false){
+    insert(k);
+  }
+});
+
+/* ---------- Histórico UI ---------- */
+document.getElementById('btnHistory').onclick = ()=>{ drawHistory(); openHist(); vibrate(5); };
+document.getElementById('closeHistory').onclick = closeHist;
+document.getElementById('clearHist').onclick = ()=>{ history=[]; save('gstudio_calc_history', history); drawHistory(); showToast('Histórico limpo'); };
+
+/* ---------- Modal Pix ---------- */
+const pixModal = document.getElementById('pixModal');
+document.getElementById('openPix').onclick = ()=>{ pixModal.classList.add('open'); };
+document.getElementById('closePix').onclick = ()=>{ pixModal.classList.remove('open'); };
+pixModal.addEventListener('click', (e)=>{ if(e.target===pixModal) pixModal.classList.remove('open'); });
+document.getElementById('copyPix').onclick = async ()=>{
+  try{
+    await navigator.clipboard.writeText('gstudioapp900@gmail.com');
+    showToast('Chave copiada!');
+    vibrate(10);
+  }catch{
+    showToast('Não foi possível copiar');
+  }
+};
+
+/* ---------- Inicialização ---------- */
+render();
+drawHistory();
+
+// dica: toque longo no AC limpa histórico também
+let acTimer;
+const acBtn = document.querySelector('[data-action="ac"]');
+acBtn.addEventListener('pointerdown', ()=>{ acTimer=setTimeout(()=>{ history=[]; save('gstudio_calc_history',[]); drawHistory(); showToast('Tudo limpo'); vibrate(20); }, 700); });
+['pointerup','pointerleave','pointercancel'].forEach(ev=>acBtn.addEventListener(ev, ()=>clearTimeout(acTimer)));
+</script>
+</body>
+</html>
